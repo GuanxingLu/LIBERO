@@ -20,6 +20,9 @@ from libero.libero.envs.objects import *
 from libero.libero.envs.regions import *
 from libero.libero.envs.arenas import *
 
+from libero.libero.envs.predicates import eval_predicate_fn
+import time
+
 
 DIR_PATH = os.path.dirname(os.path.realpath(__file__))
 
@@ -29,9 +32,6 @@ TASK_MAPPING = {}
 def register_problem(target_class):
     """We design the mapping to be case-INsensitive."""
     TASK_MAPPING[target_class.__name__.lower()] = target_class
-
-
-import time
 
 
 class BDDLBaseDomain(SingleArmEnv):
@@ -166,27 +166,152 @@ class BDDLBaseDomain(SingleArmEnv):
         """
         Reward function for the task.
 
-        Sparse un-normalized reward:
-
-            - a discrete reward of 1.0 is provided if the task succeeds.
-
-        Args:
-            action (np.array): [NOT USED]
-
         Returns:
-            float: reward value
+            float: reward value, either sparse (1.0 for success) or dense (progress-based)
         """
         reward = 0.0
 
         # sparse completion reward
         if self._check_success():
             reward = 1.0
+        # dense reward shaping if enabled
+        elif self.reward_shaping:
+            reward = self._compute_dense_reward()
 
         # Scale reward if requested
         if self.reward_scale is not None:
             reward *= self.reward_scale / 1.0
 
         return reward
+
+    def _compute_dense_reward(self):
+        """
+        Compute a dense reward based on progress toward goal completion.
+        This considers distance-based metrics for common predicates.
+        
+        Returns:
+            float: A reward value between 0 and 1 representing progress toward the goal
+        """
+        goal_state = self.parsed_problem["goal_state"]
+        if not goal_state:
+            return 0.0
+            
+        # Calculate progress for each goal condition
+        progress_values = []
+        for state in goal_state:
+            progress = self._get_predicate_progress(state)
+            progress_values.append(progress)
+            
+        # Use the minimum progress as the overall progress (bottleneck approach)
+        # This ensures all conditions need to be satisfied
+        if progress_values:
+            min_progress = min(progress_values)
+            # Apply additional shaping to ensure reward is closer to zero initially
+            # and increases more rapidly as the agent gets closer to success
+            shaped_reward = min_progress ** 1.5  # Power < 1 would make reward higher, > 1 makes it lower initially
+            return shaped_reward
+        return 0.0
+        
+    def _get_predicate_progress(self, state):
+        """
+        Calculate progress toward satisfying a predicate.
+        
+        Args:
+            state: A predicate expression [predicate_name, arg1, arg2]
+            
+        Returns:
+            float: A value between 0 and 1 representing progress
+        """
+        # For binary predicates
+        if len(state) == 3:
+            predicate_fn_name = state[0]
+            object_1_name = state[1]
+            object_2_name = state[2]
+            
+            # Get object states
+            obj1 = self.object_states_dict[object_1_name]
+            obj2 = self.object_states_dict[object_2_name]
+            
+            # If predicate is already satisfied, return 1.0
+            if eval_predicate_fn(predicate_fn_name, obj1, obj2):
+                return 1.0
+                
+            # Otherwise calculate distance-based progress for common predicates
+            if predicate_fn_name.lower() == "on":
+                # Calculate normalized distance-based progress for "on" predicate
+                pos1 = obj1.get_geom_state()["pos"]
+                pos2 = obj2.get_geom_state()["pos"]
+                
+                # For "on" we need horizontal alignment and appropriate height
+                horizontal_dist = ((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)**0.5
+                vertical_dist = max(0.0, pos2[2] - pos1[2])  # Object 1 should be above object 2
+                
+                # Normalize distances (clamp to reasonable values)
+                max_horizontal_dist = 1.0  # 1 meter as maximum relevant distance
+                max_vertical_dist = 0.5    # 0.5 meter as maximum relevant vertical distance
+                
+                # Calculate normalized distances (0 = far, 1 = close)
+                normalized_horiz = max(0.0, 1.0 - horizontal_dist / max_horizontal_dist)
+                normalized_vert = max(0.0, 1.0 - vertical_dist / max_vertical_dist)
+                
+                # Multiply to create a steeper gradient that's closer to 0 initially
+                # This ensures reward is low when far away
+                progress = normalized_horiz**2 * 0.8  # Reduce maximum to require alignment
+                
+                # Add a small bonus for correct height when horizontally aligned
+                if normalized_horiz > 0.7:  # Only consider height when getting close horizontally
+                    progress += normalized_vert * 0.2
+                
+                return progress * progress  # Square again for sharper gradient
+                
+            elif predicate_fn_name.lower() == "in":
+                # Calculate normalized distance-based progress for "in" predicate
+                pos1 = obj1.get_geom_state()["pos"]
+                pos2 = obj2.get_geom_state()["pos"]
+                
+                # For "in" we need the object to be positioned inside the container
+                dist = ((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2 + (pos1[2] - pos2[2])**2)**0.5
+                
+                # Normalize distance (clamp to reasonable values)
+                max_dist = 1.0  # 1 meter as maximum relevant distance
+                progress = max(0.0, 1.0 - dist / max_dist)
+                
+                # Apply exponential scaling to create steeper gradient
+                return progress**3  # Cube the value to make it closer to 0 initially
+                
+        # For unary predicates
+        elif len(state) == 2:
+            predicate_fn_name = state[0]
+            object_name = state[1]
+            
+            # Get object state
+            obj = self.object_states_dict[object_name]
+            
+            # If predicate is already satisfied, return 1.0
+            if eval_predicate_fn(predicate_fn_name, obj):
+                return 1.0
+                
+            # Otherwise calculate distance-based progress for common predicates
+            if predicate_fn_name.lower() == "open":
+                # Return partial progress based on how open the object is
+                joint_state = obj.get_joint_state()
+                if joint_state is not None and len(joint_state) > 0:
+                    # Normalize joint state to [0,1] progress
+                    # Assuming higher joint value means more open
+                    value = min(max(joint_state[0], 0.0), 1.0)
+                    return value**2  # Square to make initial progress lower
+                    
+            elif predicate_fn_name.lower() == "close":
+                # Return partial progress based on how closed the object is
+                joint_state = obj.get_joint_state()
+                if joint_state is not None and len(joint_state) > 0:
+                    # Normalize joint state to [0,1] progress (invert from open)
+                    # Assuming lower joint value means more closed
+                    value = 1.0 - min(max(joint_state[0], 0.0), 1.0)
+                    return value**2  # Square to make initial progress lower
+        
+        # Default case - binary success/failure with no progress metric
+        return 0.0
 
     def _assert_problem_name(self):
         """Implement this to make sure the loaded bddl file has the correct problem name specification."""

@@ -168,6 +168,22 @@ class Benchmark(abc.ABC):
         self.task_embs = task_embs
 
 
+def get_task(benchmark_name, task_id):
+    """
+    Get a task from a benchmark.
+    
+    Args:
+        benchmark_name (str): Name of the benchmark
+        task_id (int): ID of the task in the benchmark
+        
+    Returns:
+        Task: The task object
+    """
+    benchmark_class = get_benchmark(benchmark_name)
+    benchmark_instance = benchmark_class()  # Create an instance of the benchmark
+    return benchmark_instance.get_task(i=task_id)
+
+
 @register_benchmark
 class LIBERO_SPATIAL(Benchmark):
     def __init__(self, task_order_index=0):

@@ -59,6 +59,65 @@ def set_libero_default_path(custom_location=os.path.dirname(os.path.abspath(__fi
         yaml.dump(new_config, f)
 
 
+def get_env_from_task(task, task_id=None, benchmark=None, **kwargs):
+    """
+    Create an environment for a specific task.
+    
+    Args:
+        task (str): Task name
+        task_id (int, optional): Task ID in the benchmark
+        benchmark (str, optional): Benchmark name (e.g., 'libero_10')
+        **kwargs: Additional arguments to pass to the environment
+    
+    Returns:
+        OffScreenRenderEnv: The environment instance
+    """
+    from libero.libero.benchmark import get_benchmark, get_task
+    from libero.libero.envs.env_wrapper import OffScreenRenderEnv
+    
+    # Get BDDL file path
+    if benchmark is not None and task_id is not None:
+        # If benchmark and task_id are provided, get the task information from the benchmark
+        benchmark_obj = get_benchmark(benchmark)
+        benchmark_instance = benchmark_obj()  # Create an instance of the benchmark
+        task_obj = benchmark_instance.get_task(i=task_id)
+        bddl_file_path = os.path.join(
+            get_libero_path("bddl_files"),
+            task_obj.problem_folder,
+            task_obj.bddl_file
+        )
+    else:
+        # Otherwise, construct the path from the task name
+        # This assumes the task name follows the convention and is in one of the standard benchmark folders
+        for benchmark_folder in ["libero_10", "libero_90", "libero_spatial", "libero_object", "libero_goal"]:
+            potential_path = os.path.join(
+                get_libero_path("bddl_files"),
+                benchmark_folder,
+                f"{task}.bddl"
+            )
+            if os.path.exists(potential_path):
+                bddl_file_path = potential_path
+                break
+        else:
+            # If not found in standard folders, try direct path
+            bddl_file_path = os.path.join(
+                get_libero_path("bddl_files"),
+                f"{task}.bddl"
+            )
+            if not os.path.exists(bddl_file_path):
+                raise FileNotFoundError(f"Could not find BDDL file for task {task}")
+    
+    # Create environment
+    env_args = {
+        "bddl_file_name": bddl_file_path,
+        "camera_heights": 128,
+        "camera_widths": 128,
+        **kwargs  # Add any additional arguments
+    }
+    
+    return OffScreenRenderEnv(**env_args)
+
+
 if not os.path.exists(libero_config_path):
     os.makedirs(libero_config_path)
 
