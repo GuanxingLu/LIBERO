@@ -83,6 +83,8 @@ class BDDLBaseDomain(SingleArmEnv):
         # reward configuration
         self.reward_scale = reward_scale
         self.reward_shaping = reward_shaping
+        # Variable to track initial reward value
+        self.initial_reward_value = None
 
         # whether to use ground-truth object states
         self.use_object_obs = use_object_obs
@@ -188,6 +190,7 @@ class BDDLBaseDomain(SingleArmEnv):
         """
         Compute a dense reward based on progress toward goal completion.
         This considers distance-based metrics for common predicates.
+        Normalizes the reward so the initial state has a reward of 0.
         
         Returns:
             float: A reward value between 0 and 1 representing progress toward the goal
@@ -204,13 +207,16 @@ class BDDLBaseDomain(SingleArmEnv):
             
         # Use the minimum progress as the overall progress (bottleneck approach)
         # This ensures all conditions need to be satisfied
-        if progress_values:
-            min_progress = min(progress_values)
-            # Apply additional shaping to ensure reward is closer to zero initially
-            # and increases more rapidly as the agent gets closer to success
-            shaped_reward = min_progress ** 1.5  # Power < 1 would make reward higher, > 1 makes it lower initially
-            return shaped_reward
-        return 0.0
+        current_reward = min(progress_values) if progress_values else 0.0
+        
+        # Initialize the initial reward value if not yet set
+        if self.initial_reward_value is None:
+            self.initial_reward_value = current_reward
+            
+        # Normalize reward so initial state has reward 0
+        normalized_reward = max(0.0, current_reward - self.initial_reward_value) / (1.0 - self.initial_reward_value) if self.initial_reward_value < 1.0 else 0.0
+        
+        return normalized_reward
         
     def _get_predicate_progress(self, state):
         """
@@ -244,25 +250,13 @@ class BDDLBaseDomain(SingleArmEnv):
                 
                 # For "on" we need horizontal alignment and appropriate height
                 horizontal_dist = ((pos1[0] - pos2[0])**2 + (pos1[1] - pos2[1])**2)**0.5
-                vertical_dist = max(0.0, pos2[2] - pos1[2])  # Object 1 should be above object 2
                 
                 # Normalize distances (clamp to reasonable values)
                 max_horizontal_dist = 1.0  # 1 meter as maximum relevant distance
-                max_vertical_dist = 0.5    # 0.5 meter as maximum relevant vertical distance
-                
-                # Calculate normalized distances (0 = far, 1 = close)
                 normalized_horiz = max(0.0, 1.0 - horizontal_dist / max_horizontal_dist)
-                normalized_vert = max(0.0, 1.0 - vertical_dist / max_vertical_dist)
                 
-                # Multiply to create a steeper gradient that's closer to 0 initially
-                # This ensures reward is low when far away
-                progress = normalized_horiz**2 * 0.8  # Reduce maximum to require alignment
-                
-                # Add a small bonus for correct height when horizontally aligned
-                if normalized_horiz > 0.7:  # Only consider height when getting close horizontally
-                    progress += normalized_vert * 0.2
-                
-                return progress * progress  # Square again for sharper gradient
+                # Return progress value biased toward horizontal alignment
+                return normalized_horiz**2  # Square to create more gradient
                 
             elif predicate_fn_name.lower() == "in":
                 # Calculate normalized distance-based progress for "in" predicate
@@ -274,10 +268,7 @@ class BDDLBaseDomain(SingleArmEnv):
                 
                 # Normalize distance (clamp to reasonable values)
                 max_dist = 1.0  # 1 meter as maximum relevant distance
-                progress = max(0.0, 1.0 - dist / max_dist)
-                
-                # Apply exponential scaling to create steeper gradient
-                return progress**3  # Cube the value to make it closer to 0 initially
+                return max(0.0, 1.0 - dist / max_dist)**2
                 
         # For unary predicates
         elif len(state) == 2:
@@ -298,8 +289,7 @@ class BDDLBaseDomain(SingleArmEnv):
                 if joint_state is not None and len(joint_state) > 0:
                     # Normalize joint state to [0,1] progress
                     # Assuming higher joint value means more open
-                    value = min(max(joint_state[0], 0.0), 1.0)
-                    return value**2  # Square to make initial progress lower
+                    return min(max(joint_state[0], 0.0), 1.0)
                     
             elif predicate_fn_name.lower() == "close":
                 # Return partial progress based on how closed the object is
@@ -307,8 +297,7 @@ class BDDLBaseDomain(SingleArmEnv):
                 if joint_state is not None and len(joint_state) > 0:
                     # Normalize joint state to [0,1] progress (invert from open)
                     # Assuming lower joint value means more closed
-                    value = 1.0 - min(max(joint_state[0], 0.0), 1.0)
-                    return value**2  # Square to make initial progress lower
+                    return 1.0 - min(max(joint_state[0], 0.0), 1.0)
         
         # Default case - binary success/failure with no progress metric
         return 0.0
@@ -858,6 +847,9 @@ class BDDLBaseDomain(SingleArmEnv):
         Resets simulation internal configurations.
         """
         super()._reset_internal()
+        
+        # Reset the initial reward value on environment reset
+        self.initial_reward_value = None
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
         if not self.deterministic_reset:

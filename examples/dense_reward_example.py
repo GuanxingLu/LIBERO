@@ -27,8 +27,8 @@ def main(args):
         task_id=args.task_id,
         benchmark=args.benchmark,
         control_freq=args.control_freq,
-        # reward_shaping=True,  # Enable dense rewards
-        reward_shaping=False,
+        reward_shaping=True,  # Enable dense rewards
+        # reward_shaping=False,
     )
     
     # Reset the environment
