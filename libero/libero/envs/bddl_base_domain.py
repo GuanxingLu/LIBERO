@@ -213,8 +213,15 @@ class BDDLBaseDomain(SingleArmEnv):
         if self.initial_reward_value is None:
             self.initial_reward_value = current_reward
             
+        # Use a small epsilon threshold to account for floating-point imprecision
+        epsilon = 1e-4
+        reward_diff = current_reward - self.initial_reward_value
+        
         # Normalize reward so initial state has reward 0
-        normalized_reward = max(0.0, current_reward - self.initial_reward_value) / (1.0 - self.initial_reward_value) if self.initial_reward_value < 1.0 else 0.0
+        if abs(reward_diff) < epsilon:
+            normalized_reward = 0.0
+        else:
+            normalized_reward = max(0.0, reward_diff) / (1.0 - self.initial_reward_value) if self.initial_reward_value < 1.0 else 0.0
         
         return normalized_reward
         
