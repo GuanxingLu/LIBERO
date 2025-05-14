@@ -265,7 +265,7 @@ class BDDLBaseDomain(SingleArmEnv):
                 normalized_horiz = max(0.0, 1.0 - horizontal_dist / max_horizontal_dist)
                 
                 # Return progress value biased toward horizontal alignment
-                return normalized_horiz**2  # Square to create more gradient
+                return normalized_horiz
                 
             elif predicate_fn_name.lower() == "in":
                 # Calculate normalized distance-based progress for "in" predicate
@@ -277,38 +277,9 @@ class BDDLBaseDomain(SingleArmEnv):
                 
                 # Normalize distance (clamp to reasonable values)
                 max_dist = 1.0  # 1 meter as maximum relevant distance
-                return max(0.0, 1.0 - dist / max_dist)**2
-                
-        # For unary predicates
-        elif len(state) == 2:
-            predicate_fn_name = state[0]
-            object_name = state[1]
-            
-            # Get object state
-            obj = self.object_states_dict[object_name]
-            
-            # If predicate is already satisfied, return 1.0
-            if eval_predicate_fn(predicate_fn_name, obj):
-                return 1.0
-                
-            # Otherwise calculate distance-based progress for common predicates
-            if predicate_fn_name.lower() == "open":
-                # Return partial progress based on how open the object is
-                joint_state = obj.get_joint_state()
-                if joint_state is not None and len(joint_state) > 0:
-                    # Normalize joint state to [0,1] progress
-                    # Assuming higher joint value means more open
-                    return min(max(joint_state[0], 0.0), 1.0)
-                    
-            elif predicate_fn_name.lower() == "close":
-                # Return partial progress based on how closed the object is
-                joint_state = obj.get_joint_state()
-                if joint_state is not None and len(joint_state) > 0:
-                    # Normalize joint state to [0,1] progress (invert from open)
-                    # Assuming lower joint value means more closed
-                    return 1.0 - min(max(joint_state[0], 0.0), 1.0)
-        
-        # Default case - binary success/failure with no progress metric
+                normalized_dist = max(0.0, 1.0 - dist / max_dist)
+                return normalized_dist
+
         return 0.0
 
     def _assert_problem_name(self):

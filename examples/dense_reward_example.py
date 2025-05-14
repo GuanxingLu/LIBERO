@@ -68,7 +68,7 @@ def main(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--benchmark", type=str, default="libero_spatial")
+    parser.add_argument("--benchmark", type=str, default="libero_goal")
     parser.add_argument("--task_id", type=int, default=0)
     parser.add_argument("--control_freq", type=int, default=20)
     parser.add_argument("--steps", type=int, default=500)
