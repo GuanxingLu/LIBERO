@@ -188,43 +188,45 @@ class BDDLBaseDomain(SingleArmEnv):
 
     def _compute_dense_reward(self):
         """
-        Compute a dense reward based on progress toward goal completion.
-        This considers distance-based metrics for common predicates.
-        Normalizes the reward so the initial state has a reward of 0.
+        Compute a dense reward based on change in distance to goal between states:
+        R(ot, ot+1; {g}) := S(ot+1; g) − S(ot; g)
+        where S is the distance function and g is the goal state.
         
         Returns:
-            float: A reward value between 0 and 1 representing progress toward the goal
+            float: A reward value representing progress toward the goal
         """
         goal_state = self.parsed_problem["goal_state"]
         if not goal_state:
             return 0.0
             
-        # Calculate progress for each goal condition
-        progress_values = []
+        # Calculate distance for each goal condition (lower is better)
+        # We use 1-progress as our distance metric (so 0 means achieved)
+        distances = []
         for state in goal_state:
             progress = self._get_predicate_progress(state)
-            progress_values.append(progress)
+            distance = 1.0 - progress  # Convert progress to distance
+            distances.append(distance)
             
-        # Use the minimum progress as the overall progress (bottleneck approach)
+        # Use the maximum distance as the overall distance (bottleneck approach)
         # This ensures all conditions need to be satisfied
-        current_reward = min(progress_values) if progress_values else 0.0
+        current_distance = max(distances) if distances else 1.0
         
-        # Initialize the initial reward value if not yet set
-        if self.initial_reward_value is None:
-            self.initial_reward_value = current_reward
+        # Initialize the previous distance value if not yet set
+        if not hasattr(self, 'previous_distance'):
+            self.previous_distance = current_distance
+            return 0.0
             
-        # Use a small epsilon threshold to account for floating-point imprecision
-        epsilon = 1e-4
-        reward_diff = current_reward - self.initial_reward_value
+        # Calculate difference in distance (negative means we got closer to goal)
+        distance_diff = self.previous_distance - current_distance
         
-        # Normalize reward so initial state has reward 0
-        if abs(reward_diff) < epsilon:
-            normalized_reward = 0.0
-        else:
-            normalized_reward = max(0.0, reward_diff) / (1.0 - self.initial_reward_value) if self.initial_reward_value < 1.0 else 0.0
+        # Store current distance for next step
+        self.previous_distance = current_distance
         
-        return normalized_reward
+        # Scale reward to be more significant
+        reward = distance_diff * self.reward_scale
         
+        return reward
+
     def _get_predicate_progress(self, state):
         """
         Calculate progress toward satisfying a predicate.
@@ -855,8 +857,9 @@ class BDDLBaseDomain(SingleArmEnv):
         """
         super()._reset_internal()
         
-        # Reset the initial reward value on environment reset
-        self.initial_reward_value = None
+        # Reset distance tracking for reward calculation
+        if hasattr(self, 'previous_distance'):
+            delattr(self, 'previous_distance')
 
         # Reset all object positions using initializer sampler if we're not directly loading from an xml
         if not self.deterministic_reset:
