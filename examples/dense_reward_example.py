@@ -52,23 +52,24 @@ def main(args):
             break
     
     # Plot the reward curve if matplotlib is available
-    try:
-        import matplotlib.pyplot as plt
-        plt.figure(figsize=(10, 5))
-        plt.plot(rewards)
-        plt.title("Dense Rewards Over Time")
-        plt.xlabel("Steps")
-        plt.ylabel("Reward")
-        plt.savefig("dense_reward_plot.png")
-        print("Reward plot saved as dense_reward_plot.png")
-    except ImportError:
-        print("Matplotlib not available for plotting.")
+    # try:
+    #     import matplotlib.pyplot as plt
+    #     plt.figure(figsize=(10, 5))
+    #     plt.plot(rewards)
+    #     plt.title("Dense Rewards Over Time")
+    #     plt.xlabel("Steps")
+    #     plt.ylabel("Reward")
+    #     plt.savefig("dense_reward_plot.png")
+    #     print("Reward plot saved as dense_reward_plot.png")
+    # except ImportError:
+    #     print("Matplotlib not available for plotting.")
     
     env.close()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--benchmark", type=str, default="libero_goal")
+    # parser.add_argument("--benchmark", type=str, default="libero_10")
     parser.add_argument("--task_id", type=int, default=0)
     parser.add_argument("--control_freq", type=int, default=20)
     parser.add_argument("--steps", type=int, default=500)

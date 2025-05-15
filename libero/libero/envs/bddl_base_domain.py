@@ -196,6 +196,9 @@ class BDDLBaseDomain(SingleArmEnv):
             float: A reward value representing progress toward the goal
         """
         goal_state = self.parsed_problem["goal_state"]
+
+        # print(f"goal_state: {goal_state}")
+
         if not goal_state:
             return 0.0
             
@@ -266,7 +269,7 @@ class BDDLBaseDomain(SingleArmEnv):
                 
                 # Return progress value biased toward horizontal alignment
                 return normalized_horiz
-                
+        
             elif predicate_fn_name.lower() == "in":
                 # Calculate normalized distance-based progress for "in" predicate
                 pos1 = obj1.get_geom_state()["pos"]
@@ -279,8 +282,142 @@ class BDDLBaseDomain(SingleArmEnv):
                 max_dist = 1.0  # 1 meter as maximum relevant distance
                 normalized_dist = max(0.0, 1.0 - dist / max_dist)
                 return normalized_dist
+            
+            else:
+                raise NotImplementedError(f"Reward shaping for predicate {predicate_fn_name} not implemented")
+        
+        elif len(state) == 2:  # Unary predicate
+            predicate_fn_name_orig_case = state[0] # Keep original case for eval_predicate_fn
+            predicate_fn_name_lower = state[0].lower()
+            object_name = state[1]
+            
+            obj_state = self.object_states_dict[object_name] # This is an ObjectState instance
 
-        return 0.0
+            # First, check if the predicate is already true
+            if eval_predicate_fn(predicate_fn_name_orig_case, obj_state):
+                return 1.0
+
+            progress = 0.0
+
+            # Handling for "open" and "close" predicates
+            if predicate_fn_name_lower in ["open", "close"]:
+                # These predicates only apply to ArticulatedObjects with ObjectState
+                obj = self.get_object(object_name)
+                if not isinstance(obj_state, ObjectState) or not isinstance(obj, ArticulatedObject):
+                    return 0.0 # Not an articulated object, so cannot be opened/closed in this context
+
+                # Get joint state - use get_joint_state method instead of directly accessing qpos
+                joint_states = obj_state.get_joint_state()
+                if not joint_states:  # Empty list means no joints
+                    return 0.0
+                
+                q_curr = joint_states[0]  # Use the first joint position
+                
+                if not hasattr(obj, "object_properties") or \
+                   "articulation" not in obj.object_properties:
+                    return 0.0
+
+                art_props = obj.object_properties["articulation"]
+                
+                target_ranges_key_suffix = predicate_fn_name_lower + "_ranges"
+                opposite_ranges_key_suffix = "close_ranges" if predicate_fn_name_lower == "open" else "open_ranges"
+
+                default_target_ranges_key = "default_" + target_ranges_key_suffix
+                default_opposite_ranges_key = "default_" + opposite_ranges_key_suffix
+
+                if default_target_ranges_key not in art_props or \
+                   default_opposite_ranges_key not in art_props:
+                    return 0.0
+
+                target_ranges = art_props[default_target_ranges_key]
+                opposite_ranges = art_props[default_opposite_ranges_key]
+
+                q_target_min_val = min(target_ranges)
+                q_target_max_val = max(target_ranges)
+                q_opp_min_val = min(opposite_ranges)
+                q_opp_max_val = max(opposite_ranges)
+
+                current_progress = 0.0
+                # Case 1: Target achieved by qpos decreasing (e.g., Microwave open q < C)
+                # Target range is "to the left" of opposite range.
+                if q_target_max_val < q_opp_min_val:
+                    q_target_entry = q_target_max_val
+                    q_opposite_extreme = q_opp_max_val
+                    denominator = q_opposite_extreme - q_target_entry
+                    if denominator > 1e-6:
+                        current_progress = (q_opposite_extreme - q_curr) / denominator
+                # Case 2: Target achieved by qpos increasing (e.g., ShortCabinet open q > C)
+                # Target range is "to the right" of opposite range.
+                elif q_target_min_val > q_opp_max_val:
+                    q_target_entry = q_target_min_val
+                    q_opposite_extreme = q_opp_max_val
+                    denominator = q_target_entry - q_opposite_extreme
+                    if denominator > 1e-6:
+                        current_progress = (q_curr - q_opposite_extreme) / denominator
+                
+                progress = np.clip(current_progress, 0.0, 1.0)
+                            
+            # Handling for "turnon" and "turnoff" predicates
+            elif predicate_fn_name_lower in ["turnon", "turnoff"]:
+                # These predicates only apply to ArticulatedObjects with ObjectState
+                obj = self.get_object(object_name)
+                if not isinstance(obj_state, ObjectState) or not isinstance(obj, ArticulatedObject):
+                    return 0.0 # Not an articulated object, so cannot be turned on/off
+
+                # Get joint state - use get_joint_state method instead of directly accessing qpos
+                joint_states = obj_state.get_joint_state()
+                if not joint_states:  # Empty list means no joints
+                    return 0.0
+                
+                q_curr = joint_states[0]  # Use the first joint position
+                
+                if not hasattr(obj, "object_properties") or \
+                   "articulation" not in obj.object_properties:
+                    return 0.0
+                
+                art_props = obj.object_properties["articulation"]
+
+                target_ranges_key_suffix = predicate_fn_name_lower + "_ranges"
+                opposite_ranges_key_suffix = "turnoff_ranges" if predicate_fn_name_lower == "turnon" else "turnon_ranges"
+
+                default_target_ranges_key = "default_" + target_ranges_key_suffix
+                default_opposite_ranges_key = "default_" + opposite_ranges_key_suffix
+
+                if default_target_ranges_key not in art_props or \
+                   default_opposite_ranges_key not in art_props:
+                    return 0.0
+
+                target_ranges = art_props[default_target_ranges_key]
+                opposite_ranges = art_props[default_opposite_ranges_key]
+
+                q_target_min_val = min(target_ranges)
+                q_target_max_val = max(target_ranges)
+                q_opp_min_val = min(opposite_ranges)
+                q_opp_max_val = max(opposite_ranges)
+                
+                current_progress = 0.0
+                # Case 1: Target achieved by qpos decreasing (e.g., FlatStove turn_off q < C)
+                if q_target_max_val < q_opp_min_val:
+                    q_target_entry = q_target_max_val
+                    q_opposite_extreme = q_opp_max_val
+                    denominator = q_opposite_extreme - q_target_entry
+                    if denominator > 1e-6:
+                        current_progress = (q_opposite_extreme - q_curr) / denominator
+                # Case 2: Target achieved by qpos increasing (e.g., FlatStove turn_on q > C)
+                elif q_target_min_val > q_opp_max_val:
+                    q_target_entry = q_target_min_val
+                    q_opposite_extreme = q_opp_max_val
+                    denominator = q_target_entry - q_opposite_extreme
+                    if denominator > 1e-6:
+                        current_progress = (q_curr - q_opposite_extreme) / denominator
+
+                progress = np.clip(current_progress, 0.0, 1.0)
+            else:
+                raise NotImplementedError(f"Reward shaping for unary predicate '{predicate_fn_name_lower}' not implemented.")
+        else:
+            raise NotImplementedError(f"Reward shaping for predicate {state[0]} with arity {len(state)-1} not implemented.")
+
+        return progress
 
     def _assert_problem_name(self):
         """Implement this to make sure the loaded bddl file has the correct problem name specification."""
