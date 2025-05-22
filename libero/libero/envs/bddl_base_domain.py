@@ -221,12 +221,19 @@ class BDDLBaseDomain(SingleArmEnv):
             
         # Calculate difference in distance (negative means we got closer to goal)
         distance_diff = self.previous_distance - current_distance
+        reward = distance_diff
         
         # Store current distance for next step
         self.previous_distance = current_distance
         
-        # Scale reward to be more significant
-        reward = distance_diff * self.reward_scale
+        # Scale reward if requested
+        if self.reward_scale is not None:
+            reward *= self.reward_scale / 1.0
+
+        # clip very small values to 0
+        reward = np.clip(reward, 0.0, 1.0)
+        if np.abs(reward) < 1e-3:
+            reward = 0.0
         
         return reward
 
